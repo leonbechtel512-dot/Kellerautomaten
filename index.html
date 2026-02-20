@@ -1,695 +1,691 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, StepForward, RotateCcw, BookOpen, AlertCircle, CheckCircle2, ChevronRight, Info, Sparkles, Loader2, MessageSquare, Wand2 } from 'lucide-react';
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kellerautomat Simulator</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- React & ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  
+  <!-- Babel (um JSX im Browser zu kompilieren) -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-slate-50">
+  <div id="root"></div>
 
-// --- Gemini API Konfiguration ---
-const apiKey = ""; // Wird zur Laufzeit injiziert
-
-const fetchGemini = async (prompt, isJson = false, retries = 5, delay = 1000) => {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-
-  const payload = {
-    contents: [{ parts: [{ text: prompt }] }],
-    systemInstruction: {
-      parts: [{ text: "Du bist ein motivierender, didaktisch geschulter Informatik-Tutor für Schüler. Du hilfst beim Thema Kellerautomaten (Pushdown Automata). Antworte immer auf Deutsch, fass dich kurz (max 3 Sätze) und nutze gerne Emojis." }]
-    }
-  };
-
-  if (isJson) {
-    payload.generationConfig = {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: "OBJECT",
-        properties: {
-          word: { type: "STRING" },
-          explanation: { type: "STRING" }
-        }
-      }
-    };
-  }
-
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-
-    if (!response.ok) throw new Error(`API Fehler: ${response.status}`);
-    const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
     
-    if (isJson) {
-      return JSON.parse(text);
-    }
-    return text;
-  } catch (error) {
-    if (retries <= 0) {
-      throw new Error("KI-Netzwerkfehler nach mehreren Versuchen. Bitte versuche es später noch einmal.");
-    }
-    await new Promise(res => setTimeout(res, delay));
-    return fetchGemini(prompt, isJson, retries - 1, delay * 2);
-  }
-};
-
-// --- Level-Daten und Automaten-Regeln ---
-// Aktion: 'push' (legt etwas oben drauf), 'pop' (nimmt das oberste Element weg), 'accept' (Wort akzeptiert)
-const LEVELS = [
-  {
-    id: 0,
-    title: "Level 0: Der Compiler-Check {}",
-    description: "Erkundender Einstieg: Beim Programmieren muss jede geöffnete geschweifte Klammer '{' wieder geschlossen werden '}', sonst lässt sich der Code nicht kompilieren. Der Kellerautomat merkt sich die offenen Klammern!",
-    word: "{{}}",
-    startState: "q0",
-    rules: [
-      { state: 'q0', read: '{', top: '#', action: 'push', symbol: '{', next: 'q0', desc: "Öffnende Klammer '{' gelesen. Wir legen sie in den Keller, um sie uns zu merken." },
-      { state: 'q0', read: '{', top: '{', action: 'push', symbol: '{', next: 'q0', desc: "Noch eine öffnende Klammer '{' gelesen. Ab in den Keller damit." },
-      { state: 'q0', read: '}', top: '{', action: 'pop', next: 'q0', desc: "Schließende Klammer '}' gefunden! Sie passt zur öffnenden im Keller. Wir nehmen das '{' heraus (Pop)." },
-      { state: 'q0', read: 'ε', top: '#', action: 'accept', next: 'q_accept', desc: "Wortende erreicht und Keller ist leer. Alle Klammern haben einen Partner. Compiler ist glücklich!" }
-    ]
-  },
-  {
-    id: 1,
-    title: "Level 1: Das aⁿbⁿ Problem (Erfolg)",
-    description: "Der Automat prüft das Wort 'aabb'. Für jedes 'a' legt er ein 'A' in den Keller. Für jedes 'b' nimmt er ein 'A' heraus.",
-    word: "aabb",
-    startState: "q0",
-    rules: [
-      { state: 'q0', read: 'a', top: '#', action: 'push', symbol: 'A', next: 'q0', desc: "Erstes 'a' gelesen, lege 'A' über das '#' in den Keller." },
-      { state: 'q0', read: 'a', top: 'A', action: 'push', symbol: 'A', next: 'q0', desc: "Weiteres 'a' gelesen, lege noch ein 'A' in den Keller." },
-      { state: 'q0', read: 'b', top: 'A', action: 'pop', next: 'q1', desc: "Erstes 'b' gelesen! Wechsle Zustand zu q1 und nimm ein 'A' aus dem Keller." },
-      { state: 'q1', read: 'b', top: 'A', action: 'pop', next: 'q1', desc: "Weiteres 'b' gelesen, nimm ein 'A' aus dem Keller." },
-      { state: 'q1', read: 'ε', top: '#', action: 'accept', next: 'q2', desc: "Wortende erreicht (ε) und Keller ist leer (#). Akzeptiere das Wort!" }
-    ]
-  },
-  {
-    id: 2,
-    title: "Level 2: Falsche Anzahl b's",
-    description: "Was passiert, wenn es mehr 'b's als 'a's gibt? Teste das Wort 'abb'.",
-    word: "abb",
-    startState: "q0",
-    rules: [
-      { state: 'q0', read: 'a', top: '#', action: 'push', symbol: 'A', next: 'q0' },
-      { state: 'q0', read: 'a', top: 'A', action: 'push', symbol: 'A', next: 'q0' },
-      { state: 'q0', read: 'b', top: 'A', action: 'pop', next: 'q1' },
-      { state: 'q1', read: 'b', top: 'A', action: 'pop', next: 'q1' },
-      { state: 'q1', read: 'ε', top: '#', action: 'accept', next: 'q2' }
-    ]
-  },
-  {
-    id: 3,
-    title: "Level 3: Echte Klammern ()",
-    description: "Statt a und b nutzen wir nun echte Klammern. Das Prinzip bleibt gleich! Wort: '(())'",
-    word: "(())",
-    startState: "q0",
-    rules: [
-      { state: 'q0', read: '(', top: '#', action: 'push', symbol: '(', next: 'q0' },
-      { state: 'q0', read: '(', top: '(', action: 'push', symbol: '(', next: 'q0' },
-      { state: 'q0', read: ')', top: '(', action: 'pop', next: 'q0', desc: "Schließende Klammer passt zur öffnenden im Keller. Pop!" },
-      { state: 'q0', read: 'ε', top: '#', action: 'accept', next: 'q_accept' }
-    ]
-  },
-  {
-    id: 4,
-    title: "Level 4: Gemischte Klammern (Erfolg)",
-    description: "Jetzt wird es komplex: Runde und eckige Klammern gemischt. Wort: '([])'",
-    word: "([])",
-    startState: "q0",
-    rules: [
-      { state: 'q0', read: '(', top: '#', action: 'push', symbol: '(', next: 'q0' },
-      { state: 'q0', read: '[', top: '#', action: 'push', symbol: '[', next: 'q0' },
-      { state: 'q0', read: '(', top: '(', action: 'push', symbol: '(', next: 'q0' },
-      { state: 'q0', read: '[', top: '(', action: 'push', symbol: '[', next: 'q0' },
-      { state: 'q0', read: '(', top: '[', action: 'push', symbol: '(', next: 'q0' },
-      { state: 'q0', read: '[', top: '[', action: 'push', symbol: '[', next: 'q0' },
-      { state: 'q0', read: ')', top: '(', action: 'pop', next: 'q0' },
-      { state: 'q0', read: ']', top: '[', action: 'pop', next: 'q0' },
-      { state: 'q0', read: 'ε', top: '#', action: 'accept', next: 'q_accept' }
-    ]
-  },
-  {
-    id: 5,
-    title: "Level 5: Die Meisterprüfung (Crash)",
-    description: "Der Compiler-Albtraum: Sich überkreuzende Klammern! Wort: '([)]'",
-    word: "([)]",
-    startState: "q0",
-    rules: [
-      { state: 'q0', read: '(', top: '#', action: 'push', symbol: '(', next: 'q0' },
-      { state: 'q0', read: '[', top: '#', action: 'push', symbol: '[', next: 'q0' },
-      { state: 'q0', read: '(', top: '(', action: 'push', symbol: '(', next: 'q0' },
-      { state: 'q0', read: '[', top: '(', action: 'push', symbol: '[', next: 'q0' },
-      { state: 'q0', read: '(', top: '[', action: 'push', symbol: '(', next: 'q0' },
-      { state: 'q0', read: '[', top: '[', action: 'push', symbol: '[', next: 'q0' },
-      { state: 'q0', read: ')', top: '(', action: 'pop', next: 'q0' },
-      { state: 'q0', read: ']', top: '[', action: 'pop', next: 'q0' },
-      { state: 'q0', read: 'ε', top: '#', action: 'accept', next: 'q_accept' }
-    ]
-  }
-];
-
-// --- Neue Komponente: Zustandsübergangsgraph ---
-const StateMachineGraph = ({ levelId, currentState }) => {
-  const Node = ({ x, y, id, label, isAccept }) => {
-    const isActive = currentState === id;
-    return (
-      <g transform={`translate(${x},${y})`}>
-        {isAccept && <circle r="22" fill="none" stroke={isActive ? "#3b82f6" : "#cbd5e1"} strokeWidth="1.5" className="transition-all duration-300"/>}
-        <circle r="18" fill={isActive ? "#eff6ff" : "white"} stroke={isActive ? "#3b82f6" : "#64748b"} strokeWidth="2" className="transition-all duration-300 shadow-sm" />
-        <text textAnchor="middle" dy=".3em" className={`font-bold font-mono text-xs ${isActive ? "fill-blue-700" : "fill-slate-700"}`}>{label || id}</text>
-      </g>
-    );
-  };
-
-  // Graph für das a^n b^n Problem (Level 1 & 2)
-  if (levelId === 1 || levelId === 2) {
-    return (
-      <svg viewBox="0 0 500 180" className="w-full h-auto drop-shadow-sm">
-        <defs>
-          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8" />
-          </marker>
-        </defs>
-        
-        {/* q0 loop - Großer Bogen, Text in der Mitte */}
-        <path d="M 85 120 C 0 0, 200 0, 115 120" fill="none" stroke="#94a3b8" strokeWidth="1.5" markerEnd="url(#arrow)" />
-        <text x="100" y="45" textAnchor="middle" className="text-xs fill-slate-700 font-mono">
-          <tspan x="100" dy="0">(#, a): A#</tspan>
-          <tspan x="100" dy="16">(A, a): AA</tspan>
-        </text>
-
-        {/* q0 -> q1 */}
-        <path d="M 120 140 L 230 140" fill="none" stroke="#94a3b8" strokeWidth="1.5" markerEnd="url(#arrow)" />
-        <text x="175" y="130" textAnchor="middle" className="text-xs fill-slate-700 font-mono">(A, b): ε</text>
-
-        {/* q1 loop - Großer Bogen, Text in der Mitte */}
-        <path d="M 235 120 C 150 0, 350 0, 265 120" fill="none" stroke="#94a3b8" strokeWidth="1.5" markerEnd="url(#arrow)" />
-        <text x="250" y="55" textAnchor="middle" className="text-xs fill-slate-700 font-mono">(A, b): ε</text>
-
-        {/* q1 -> q2 */}
-        <path d="M 270 140 L 380 140" fill="none" stroke="#94a3b8" strokeWidth="1.5" markerEnd="url(#arrow)" />
-        <text x="325" y="130" textAnchor="middle" className="text-xs fill-slate-700 font-mono">(#, ε): ε</text>
-
-        <Node x={100} y={140} id="q0" />
-        <Node x={250} y={140} id="q1" />
-        <Node x={400} y={140} id="q2" isAccept={true} />
+    // --- Inline SVG Icons (Ersatz für lucide-react, um CDN-Fehler zu vermeiden) ---
+    const Icon = ({ d, size = 24, className = "" }) => (
+      <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        {d}
       </svg>
     );
-  }
+    const Play = (p) => <Icon {...p} d={<polygon points="5 3 19 12 5 21 5 3" />} />;
+    const Pause = (p) => <Icon {...p} d={<><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></>} />;
+    const StepForward = (p) => <Icon {...p} d={<><line x1="19" y1="5" x2="19" y2="19"/><polygon points="5 4 15 12 5 20 5 4"/></>} />;
+    const RotateCcw = (p) => <Icon {...p} d={<><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></>} />;
+    const BookOpen = (p) => <Icon {...p} d={<><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></>} />;
+    const AlertCircle = (p) => <Icon {...p} d={<><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></>} />;
+    const CheckCircle2 = (p) => <Icon {...p} d={<><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></>} />;
+    const ChevronRight = (p) => <Icon {...p} d={<polyline points="9 18 15 12 9 6" />} />;
+    const Info = (p) => <Icon {...p} d={<><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></>} />;
+    const Loader2 = (p) => <Icon {...p} d={<path d="M21 12a9 9 0 1 1-6.219-8.56" />} />;
+    const Wand2 = (p) => <Icon {...p} d={<><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"/></>} />;
 
-  // Graph für die Klammer-Probleme (Level 0, 3, 4, 5)
-  let loopLabels = [];
-  if (levelId === 0) {
-    loopLabels = ["(#, {): {#", "({, {): {{", "({, }): ε"];
-  } else if (levelId === 3) {
-    loopLabels = ["(#, (): (#", "((, (): ((", "((, )): ε"];
-  } else {
-    loopLabels = ["(Z, auf): auf Z", "(auf, zu): ε", "...(analog)"]; // Zusammenfassung für komplexe Level
-  }
+    // --- Gemini API Konfiguration ---
+    const apiKey = ""; // Wird zur Laufzeit injiziert
 
-  return (
-    <svg viewBox="0 0 500 180" className="w-full h-auto drop-shadow-sm">
-        <defs>
-          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8" />
-          </marker>
-        </defs>
+    const fetchGemini = async (prompt, isJson = false, retries = 5, delay = 1000) => {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
 
-        {/* q0 loop - Sehr großer Bogen für 3 Zeilen Text */}
-        <path d="M 135 120 C 20 -10, 280 -10, 165 120" fill="none" stroke="#94a3b8" strokeWidth="1.5" markerEnd="url(#arrow)" />
-        <text x="150" y="45" textAnchor="middle" className="text-xs fill-slate-700 font-mono">
-          {loopLabels.map((lbl, i) => <tspan key={i} x="150" dy={i === 0 ? 0 : 16}>{lbl}</tspan>)}
-        </text>
-
-        {/* q0 -> q_accept */}
-        <path d="M 170 140 L 330 140" fill="none" stroke="#94a3b8" strokeWidth="1.5" markerEnd="url(#arrow)" />
-        <text x="250" y="130" textAnchor="middle" className="text-xs fill-slate-700 font-mono">(#, ε): ε</text>
-
-        <Node x={150} y={140} id="q0" />
-        <Node x={350} y={140} id="q_accept" label="q_acc" isAccept={true} />
-    </svg>
-  );
-};
-
-export default function App() {
-  const [currentLevelIdx, setCurrentLevelIdx] = useState(0);
-  const [activeLevel, setActiveLevel] = useState(LEVELS[0]);
-  
-  const [tapeIndex, setTapeIndex] = useState(0);
-  const [stack, setStack] = useState(['#']);
-  const [machineState, setMachineState] = useState('q0');
-  const [status, setStatus] = useState('idle'); // idle, running, success, error
-  const [logs, setLogs] = useState([]);
-  const [isPlaying, setIsPlaying] = useState(false);
-  
-  // KI States
-  const [aiTutorMessage, setAiTutorMessage] = useState("");
-  const [isAiTutorLoading, setIsAiTutorLoading] = useState(false);
-  const [isWordGenLoading, setIsWordGenLoading] = useState(false);
-
-  const logsEndRef = useRef(null);
-
-  // Auto-scroll logs
-  useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs]);
-
-  // Handle Level Switch
-  useEffect(() => {
-    setActiveLevel(LEVELS[currentLevelIdx]);
-  }, [currentLevelIdx]);
-
-  // Reset Machine when activeLevel changes
-  useEffect(() => {
-    resetMachine();
-  }, [activeLevel]);
-
-  // Auto-play logic
-  useEffect(() => {
-    let timer;
-    if (isPlaying && (status === 'idle' || status === 'running')) {
-      timer = setTimeout(() => {
-        performStep();
-      }, 1000);
-    } else {
-      setIsPlaying(false);
-    }
-    return () => clearTimeout(timer);
-  }, [isPlaying, status, tapeIndex, stack, machineState]);
-
-  const resetMachine = () => {
-    setTapeIndex(0);
-    setStack(['#']);
-    setMachineState(activeLevel.startState);
-    setStatus('idle');
-    setLogs([{ type: 'info', msg: `Automat bereit. Wort: "${activeLevel.word}"` }]);
-    setIsPlaying(false);
-    setAiTutorMessage(""); // Clear old AI messages
-  };
-
-  const addLog = (type, msg) => {
-    setLogs(prev => [...prev, { type, msg }]);
-  };
-
-  const performStep = () => {
-    if (status === 'success' || status === 'error') return;
-
-    setStatus('running');
-    setAiTutorMessage(""); // Clear AI message on next step
-    
-    const isEndOfWord = tapeIndex >= activeLevel.word.length;
-    const charToRead = isEndOfWord ? 'ε' : activeLevel.word[tapeIndex];
-    const topOfStack = stack[stack.length - 1];
-
-    const rule = activeLevel.rules.find(
-      r => r.state === machineState && r.read === charToRead && r.top === topOfStack
-    );
-
-    if (!rule) {
-      setStatus('error');
-      addLog('error', `CRASH! Keine Regel gefunden für: Zustand ${machineState}, Eingabe '${charToRead}', Keller '${topOfStack}'.`);
-      return;
-    }
-
-    let newStack = [...stack];
-    let actionDesc = "";
-
-    if (rule.action === 'push') {
-      newStack.push(rule.symbol);
-      actionDesc = `Lege '${rule.symbol}' in den Keller.`;
-    } else if (rule.action === 'pop') {
-      newStack.pop();
-      actionDesc = `Nehme '${topOfStack}' aus dem Keller (Pop).`;
-    } else if (rule.action === 'accept') {
-      newStack.pop(); 
-      actionDesc = `Keller ist leer. Wort akzeptiert!`;
-    }
-
-    const logMsg = rule.desc 
-      ? `Regel: ${rule.desc}`
-      : `Lese '${charToRead}'. ${actionDesc} Neuer Zustand: ${rule.next}`;
-    
-    addLog('step', logMsg);
-
-    setStack(newStack);
-    setMachineState(rule.next);
-    
-    if (!isEndOfWord) {
-      setTapeIndex(tapeIndex + 1);
-    }
-
-    if (rule.action === 'accept' || rule.next === 'q2' || rule.next === 'q_accept') {
-      setStatus('success');
-      addLog('success', "Syntaxprüfung erfolgreich beendet!");
-    }
-  };
-
-  // --- Gemini API Funktionen ---
-
-  const handleAskTutor = async () => {
-    setIsAiTutorLoading(true);
-    setAiTutorMessage("");
-    
-    const lastLogs = logs.slice(-3).map(l => l.msg).join(' | ');
-    const isEndOfWord = tapeIndex >= activeLevel.word.length;
-    const charToRead = isEndOfWord ? 'ε (Wortende)' : activeLevel.word[tapeIndex];
-
-    const prompt = `
-      Der Schüler lernt Kellerautomaten und befindet sich in folgendem Zustand:
-      - Level: ${activeLevel.title}
-      - Gesamtes Eingabewort: "${activeLevel.word}"
-      - Aktuell zu lesendes Zeichen: '${charToRead}'
-      - Aktueller Maschinen-Zustand: ${machineState}
-      - Kellerspeicher von unten nach oben: [${stack.join(', ')}]
-      - Status des Automaten: ${status} (idle = wartet, running = läuft, error = abgestürzt, success = akzeptiert)
-      - Letzte Aktionen: ${lastLogs}
-
-      Erkläre dem Schüler auf einfache, verständliche Weise, was in genau diesem Moment passiert ist oder warum der Automat in genau diesem Zustand ist. 
-      Wenn es einen 'error' gab, erkläre genau warum das gelesene Zeichen nicht zum obersten Kellersymbol passte.
-      Sprich den Schüler direkt an.
-    `;
-
-    try {
-      const response = await fetchGemini(prompt, false);
-      setAiTutorMessage(response);
-    } catch (err) {
-      setAiTutorMessage(`Ups, der KI-Tutor ist gerade nicht erreichbar: ${err.message}`);
-    } finally {
-      setIsAiTutorLoading(false);
-    }
-  };
-
-  const handleGenerateWord = async () => {
-    setIsWordGenLoading(true);
-    setAiTutorMessage("");
-
-    const prompt = `
-      Generiere ein neues Testwort (String) für diesen spezifischen Kellerautomaten.
-      Titel des Levels: ${activeLevel.title}
-      Erlaubte Zeichen in diesem Level: ${Array.from(new Set(activeLevel.word.split(''))).join(', ')}
-      
-      Das Wort sollte entweder knapp fehlschlagen (um einen häufigen Fehler zu zeigen) oder eine interessante, gültige Kombination sein.
-      Antworte strikt nach dem vorgegebenen JSON Schema.
-    `;
-
-    try {
-      const result = await fetchGemini(prompt, true);
-      // Update das aktive Level mit dem neuen Wort
-      setActiveLevel(prev => ({
-        ...prev,
-        word: result.word,
-        description: `✨ KI-Testwort: ${result.explanation}`
-      }));
-      addLog('info', `✨ KI hat neues Testwort generiert: "${result.word}"`);
-    } catch (err) {
-      addLog('error', `Fehler beim Generieren des Wortes: ${err.message}`);
-    } finally {
-      setIsWordGenLoading(false);
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-800">
-      
-      {/* Header */}
-      <div className="max-w-5xl mx-auto mb-8 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div className="flex-1">
-            <h1 className="text-3xl font-bold text-slate-900 flex items-center gap-3">
-              <BookOpen className="text-blue-600" />
-              Kellerautomat Simulator
-            </h1>
-            <p className="text-slate-500 mt-2 max-w-2xl">{activeLevel.description}</p>
-          </div>
-          
-          {/* Level Selector */}
-          <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 overflow-x-auto">
-            {LEVELS.map((l, idx) => (
-              <button
-                key={l.id}
-                onClick={() => {
-                  setCurrentLevelIdx(idx);
-                  setIsPlaying(false);
-                }}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
-                  currentLevelIdx === idx 
-                    ? 'bg-white text-blue-700 shadow-sm border border-slate-200' 
-                    : 'text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                Lvl {l.id}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
-        {/* Left Column: Visualization */}
-        <div className="lg:col-span-2 space-y-8">
-          
-          {/* Tape (Leseband) */}
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                <ChevronRight size={16}/> Eingabeband
-              </h2>
-              
-              {/* ✨ KI Feature: Wort generieren */}
-              <button 
-                onClick={handleGenerateWord}
-                disabled={isWordGenLoading || isPlaying}
-                className="flex items-center gap-2 text-xs font-semibold bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-full hover:bg-indigo-100 transition-colors border border-indigo-200 disabled:opacity-50"
-              >
-                {isWordGenLoading ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
-                ✨ Neues Wort ausdenken
-              </button>
-            </div>
-
-            <div className="flex gap-2 justify-center overflow-x-auto py-4">
-              {activeLevel.word.split('').map((char, idx) => {
-                const isCurrent = idx === tapeIndex && status !== 'success';
-                const isPast = idx < tapeIndex;
-                return (
-                  <div 
-                    key={idx} 
-                    className={`
-                      min-w-[56px] h-16 flex items-center justify-center text-2xl font-mono rounded-lg border-2 transition-all duration-300 px-2
-                      ${isCurrent ? 'border-blue-500 bg-blue-50 shadow-[0_0_15px_rgba(59,130,246,0.3)] scale-110 z-10' : ''}
-                      ${isPast ? 'border-slate-200 bg-slate-100 text-slate-400' : ''}
-                      ${!isCurrent && !isPast ? 'border-slate-300 bg-white' : ''}
-                    `}
-                  >
-                    {char}
-                  </div>
-                );
-              })}
-              {/* Epsilon End-Marker */}
-              <div className={`
-                  w-14 h-16 flex items-center justify-center text-xl font-mono rounded-lg border-2 border-dashed transition-all duration-300
-                  ${tapeIndex >= activeLevel.word.length && status !== 'success' && status !== 'error' ? 'border-green-500 bg-green-50 scale-110' : 'border-slate-200 text-slate-300 bg-transparent'}
-                `}
-              >
-                ε
-              </div>
-            </div>
-            
-            {/* Lesekopf Pointer */}
-            <div className="flex justify-center mt-2">
-              <div 
-                className="w-0 h-0 border-l-[10px] border-l-transparent border-r-[10px] border-r-transparent border-b-[15px] border-b-blue-500 transition-all duration-300"
-                style={{ transform: `translateX(${(tapeIndex - (activeLevel.word.length / 2)) * 64}px)` }} // Rough estimation
-              />
-            </div>
-          </div>
-
-          {/* NEW: GRAPH SECTION (Groß und dominant) */}
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-            <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-              Zustandsübergangsgraph
-            </h2>
-            <div className="w-full bg-slate-50 rounded-xl border border-slate-100 p-6 flex justify-center items-center">
-              <div className="w-full max-w-2xl">
-                <StateMachineGraph levelId={activeLevel.id} currentState={machineState} />
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
-            {/* Stack (Keller) */}
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col items-center">
-              <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 w-full flex items-center gap-2">
-                 <div className="w-4 h-4 rounded-sm border-2 border-slate-400"></div> Kellerspeicher
-              </h2>
-              
-              <div className="w-32 min-h-[240px] border-x-4 border-b-4 border-slate-700 rounded-b-xl p-2 flex flex-col justify-end bg-slate-50 relative">
-                <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-slate-400 font-mono text-sm flex gap-4">
-                  <span>↓ In</span>
-                  <span>Out ↑</span>
-                </div>
-
-                {stack.map((symbol, idx) => (
-                  <div 
-                    key={idx}
-                    className={`
-                      w-full h-12 bg-indigo-100 border-2 border-indigo-300 rounded-md flex items-center justify-center text-xl font-mono font-bold text-indigo-800 mb-1 last:mb-0 shadow-sm
-                      animate-[slideIn_0.2s_ease-out]
-                    `}
-                  >
-                    {symbol}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Controls & State */}
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col">
-              <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-2">Maschinen-Steuerung</h2>
-              
-              <div className="flex-grow flex flex-col justify-center items-center mb-6 w-full bg-slate-50 rounded-xl border border-slate-100 p-4">
-                
-                <div className={`
-                  w-24 h-24 rounded-full flex items-center justify-center text-3xl font-bold border-4 transition-all duration-500 shadow-lg
-                  ${status === 'error' ? 'border-red-500 bg-red-100 text-red-700' : ''}
-                  ${status === 'success' ? 'border-green-500 bg-green-100 text-green-700' : ''}
-                  ${status === 'idle' || status === 'running' ? 'border-blue-500 bg-blue-50 text-blue-700' : ''}
-                `}>
-                  {machineState}
-                </div>
-                
-                <div className="mt-6 text-center min-h-[28px]">
-                  {status === 'error' && <span className="inline-flex items-center gap-2 text-red-600 font-semibold"><AlertCircle size={20}/> Syntax Error</span>}
-                  {status === 'success' && <span className="inline-flex items-center gap-2 text-green-600 font-semibold"><CheckCircle2 size={20}/> Akzeptiert</span>}
-                  {(status === 'idle' || status === 'running') && <span className="text-slate-500 text-sm font-mono">Arbeitet...</span>}
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="grid grid-cols-3 gap-2">
-                <button 
-                  onClick={() => setIsPlaying(!isPlaying)}
-                  disabled={status === 'error' || status === 'success'}
-                  className="flex flex-col items-center justify-center p-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 disabled:opacity-50 transition-colors"
-                >
-                  {isPlaying ? <Pause size={24} className="mb-1" /> : <Play size={24} className="mb-1" />}
-                  <span className="text-xs font-semibold">{isPlaying ? 'Pause' : 'Play'}</span>
-                </button>
-                <button 
-                  onClick={performStep}
-                  disabled={isPlaying || status === 'error' || status === 'success'}
-                  className="flex flex-col items-center justify-center p-3 rounded-xl bg-blue-100 hover:bg-blue-200 text-blue-700 disabled:opacity-50 transition-colors"
-                >
-                  <StepForward size={24} className="mb-1" />
-                  <span className="text-xs font-semibold">Schritt</span>
-                </button>
-                <button 
-                  onClick={resetMachine}
-                  className="flex flex-col items-center justify-center p-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
-                >
-                  <RotateCcw size={24} className="mb-1" />
-                  <span className="text-xs font-semibold">Reset</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column: Logs & Rules */}
-        <div className="space-y-8">
-          
-          {/* Log Window - Verkleinert auf h-48 */}
-          <div className="bg-slate-900 rounded-2xl shadow-sm border border-slate-800 flex flex-col h-48 overflow-hidden">
-             <div className="bg-slate-800 px-4 py-3 border-b border-slate-700 flex items-center justify-between">
-              <h2 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
-                Ereignis-Protokoll
-              </h2>
-             </div>
-             <div className="p-4 overflow-y-auto flex-grow font-mono text-sm space-y-3">
-                {logs.map((log, idx) => (
-                  <div key={idx} className={`
-                    p-2 rounded border-l-4
-                    ${log.type === 'info' ? 'border-blue-500 bg-slate-800/50 text-blue-300' : ''}
-                    ${log.type === 'step' ? 'border-slate-500 bg-slate-800 text-slate-300' : ''}
-                    ${log.type === 'error' ? 'border-red-500 bg-red-900/30 text-red-400' : ''}
-                    ${log.type === 'success' ? 'border-green-500 bg-green-900/30 text-green-400' : ''}
-                  `}>
-                    <span className="opacity-50 text-xs mr-2">[{idx}]</span>
-                    {log.msg}
-                  </div>
-                ))}
-                <div ref={logsEndRef} />
-             </div>
-          </div>
-
-          {/* Tabelle: Übergangsfunktion */}
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col max-h-64">
-             <div className="bg-slate-50 px-4 py-3 border-b border-slate-200">
-              <h2 className="text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center gap-2">
-                Übergangsfunktion δ
-              </h2>
-             </div>
-             <div className="overflow-y-auto">
-               <table className="w-full text-xs text-center border-collapse">
-                 <thead className="sticky top-0 shadow-sm z-10">
-                   <tr>
-                     <th className="py-2 px-1 bg-[#dcedc8] text-green-900 border-r border-white font-semibold">Zustand</th>
-                     <th className="py-2 px-1 bg-[#dcedc8] text-green-900 border-r border-white font-semibold">Eingabe</th>
-                     <th className="py-2 px-1 bg-[#dcedc8] text-green-900 border-r border-white font-semibold">Keller</th>
-                     <th className="py-2 px-1 bg-[#bbdefb] text-blue-900 border-r border-white font-semibold">Zustand</th>
-                     <th className="py-2 px-1 bg-[#bbdefb] text-blue-900 font-semibold">Keller</th>
-                   </tr>
-                 </thead>
-                 <tbody>
-                   {activeLevel.rules.map((r, i) => {
-                      const isEndOfWord = tapeIndex >= activeLevel.word.length;
-                      const charToRead = isEndOfWord ? 'ε' : activeLevel.word[tapeIndex];
-                      const topOfStack = stack[stack.length - 1];
-                      // Zeige an, welche Regel gerade aktiv ist / als nächstes greift
-                      const isActive = (status === 'idle' || status === 'running') && r.state === machineState && r.read === charToRead && r.top === topOfStack;
-                      
-                      // Berechnung des neuen Keller-Inhalts (Push: neues Symbol + altes | Pop/Accept: ε)
-                      const newKeller = r.action === 'push' ? (r.symbol + r.top) : 'ε';
-
-                      return (
-                        <tr key={i} className={`border-b border-slate-100 last:border-0 transition-colors ${isActive ? 'bg-amber-200 font-bold text-amber-900' : 'hover:bg-slate-50'}`}>
-                          <td className="py-1.5 px-1 border-r border-slate-100">{r.state}</td>
-                          <td className="py-1.5 px-1 border-r border-slate-100">{r.read}</td>
-                          <td className="py-1.5 px-1 border-r border-slate-200">{r.top}</td>
-                          <td className="py-1.5 px-1 border-r border-slate-100">{r.next}</td>
-                          <td className="py-1.5 px-1">{newKeller}</td>
-                        </tr>
-                      );
-                   })}
-                 </tbody>
-               </table>
-             </div>
-          </div>
-
-          {/* Current Rule Highlight */}
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-amber-200 bg-amber-50">
-             <h2 className="text-sm font-bold text-amber-800 uppercase tracking-wider mb-3 flex items-center gap-2">
-              <Info size={18} /> So denkt der Automat
-             </h2>
-             <p className="text-amber-900 text-sm leading-relaxed">
-               Lies die Tabelle im Kopf: 
-               <br/><br/>
-               <b>"Wenn ich in Zustand X bin..."</b><br/>
-               <b>"...und Zeichen Y lese..."</b><br/>
-               <b>"...und oben im Keller Z liegt..."</b><br/>
-               <br/>
-               ...dann wende ich die entsprechende Regel an! Fehlt die Regel, gibt es einen Syntax-Fehler (Crash).
-             </p>
-          </div>
-
-        </div>
-      </div>
-      
-      {/* Global styles for animations */}
-      <style dangerouslySetInnerHTML={{__html: `
-        @keyframes slideIn {
-          from { opacity: 0; transform: translateY(-10px); }
-          to { opacity: 1; transform: translateY(0); }
+      const payload = {
+        contents: [{ parts: [{ text: prompt }] }],
+        systemInstruction: {
+          parts: [{ text: "Du bist ein motivierender, didaktisch geschulter Informatik-Tutor für Schüler. Du hilfst beim Thema Kellerautomaten (Pushdown Automata). Antworte immer auf Deutsch, fass dich kurz (max 3 Sätze) und nutze gerne Emojis." }]
         }
-      `}} />
-    </div>
-  );
-}
+      };
+
+      if (isJson) {
+        payload.generationConfig = {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "OBJECT",
+            properties: {
+              word: { type: "STRING" },
+              explanation: { type: "STRING" }
+            }
+          }
+        };
+      }
+
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) throw new Error(`API Fehler: ${response.status}`);
+        const data = await response.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        
+        if (isJson) {
+          return JSON.parse(text);
+        }
+        return text;
+      } catch (error) {
+        if (retries <= 0) {
+          throw new Error("KI-Netzwerkfehler nach mehreren Versuchen. Bitte versuche es später noch einmal.");
+        }
+        await new Promise(res => setTimeout(res, delay));
+        return fetchGemini(prompt, isJson, retries - 1, delay * 2);
+      }
+    };
+
+    // --- Level-Daten und Automaten-Regeln ---
+    const LEVELS = [
+      {
+        id: 0,
+        title: "Level 0: Der Compiler-Check {}",
+        description: "Erkundender Einstieg: Beim Programmieren muss jede geöffnete geschweifte Klammer '{' wieder geschlossen werden '}', sonst lässt sich der Code nicht kompilieren. Der Kellerautomat merkt sich die offenen Klammern!",
+        word: "{{}}",
+        startState: "q0",
+        rules: [
+          { state: 'q0', read: '{', top: '#', action: 'push', symbol: '{', next: 'q0', desc: "Öffnende Klammer '{' gelesen. Wir legen sie in den Keller, um sie uns zu merken." },
+          { state: 'q0', read: '{', top: '{', action: 'push', symbol: '{', next: 'q0', desc: "Noch eine öffnende Klammer '{' gelesen. Ab in den Keller damit." },
+          { state: 'q0', read: '}', top: '{', action: 'pop', next: 'q0', desc: "Schließende Klammer '}' gefunden! Sie passt zur öffnenden im Keller. Wir nehmen das '{' heraus (Pop)." },
+          { state: 'q0', read: 'ε', top: '#', action: 'accept', next: 'q_accept', desc: "Wortende erreicht und Keller ist leer. Alle Klammern haben einen Partner. Compiler ist glücklich!" }
+        ]
+      },
+      {
+        id: 1,
+        title: "Level 1: Das aⁿbⁿ Problem (Erfolg)",
+        description: "Der Automat prüft das Wort 'aabb'. Für jedes 'a' legt er ein 'A' in den Keller. Für jedes 'b' nimmt er ein 'A' heraus.",
+        word: "aabb",
+        startState: "q0",
+        rules: [
+          { state: 'q0', read: 'a', top: '#', action: 'push', symbol: 'A', next: 'q0', desc: "Erstes 'a' gelesen, lege 'A' über das '#' in den Keller." },
+          { state: 'q0', read: 'a', top: 'A', action: 'push', symbol: 'A', next: 'q0', desc: "Weiteres 'a' gelesen, lege noch ein 'A' in den Keller." },
+          { state: 'q0', read: 'b', top: 'A', action: 'pop', next: 'q1', desc: "Erstes 'b' gelesen! Wechsle Zustand zu q1 und nimm ein 'A' aus dem Keller." },
+          { state: 'q1', read: 'b', top: 'A', action: 'pop', next: 'q1', desc: "Weiteres 'b' gelesen, nimm ein 'A' aus dem Keller." },
+          { state: 'q1', read: 'ε', top: '#', action: 'accept', next: 'q2', desc: "Wortende erreicht (ε) und Keller ist leer (#). Akzeptiere das Wort!" }
+        ]
+      },
+      {
+        id: 2,
+        title: "Level 2: Falsche Anzahl b's",
+        description: "Was passiert, wenn es mehr 'b's als 'a's gibt? Teste das Wort 'abb'.",
+        word: "abb",
+        startState: "q0",
+        rules: [
+          { state: 'q0', read: 'a', top: '#', action: 'push', symbol: 'A', next: 'q0' },
+          { state: 'q0', read: 'a', top: 'A', action: 'push', symbol: 'A', next: 'q0' },
+          { state: 'q0', read: 'b', top: 'A', action: 'pop', next: 'q1' },
+          { state: 'q1', read: 'b', top: 'A', action: 'pop', next: 'q1' },
+          { state: 'q1', read: 'ε', top: '#', action: 'accept', next: 'q2' }
+        ]
+      },
+      {
+        id: 3,
+        title: "Level 3: Echte Klammern ()",
+        description: "Statt a und b nutzen wir nun echte Klammern. Das Prinzip bleibt gleich! Wort: '(())'",
+        word: "(())",
+        startState: "q0",
+        rules: [
+          { state: 'q0', read: '(', top: '#', action: 'push', symbol: '(', next: 'q0' },
+          { state: 'q0', read: '(', top: '(', action: 'push', symbol: '(', next: 'q0' },
+          { state: 'q0', read: ')', top: '(', action: 'pop', next: 'q0', desc: "Schließende Klammer passt zur öffnenden im Keller. Pop!" },
+          { state: 'q0', read: 'ε', top: '#', action: 'accept', next: 'q_accept' }
+        ]
+      },
+      {
+        id: 4,
+        title: "Level 4: Gemischte Klammern (Erfolg)",
+        description: "Jetzt wird es komplex: Runde und eckige Klammern gemischt. Wort: '([])'",
+        word: "([])",
+        startState: "q0",
+        rules: [
+          { state: 'q0', read: '(', top: '#', action: 'push', symbol: '(', next: 'q0' },
+          { state: 'q0', read: '[', top: '#', action: 'push', symbol: '[', next: 'q0' },
+          { state: 'q0', read: '(', top: '(', action: 'push', symbol: '(', next: 'q0' },
+          { state: 'q0', read: '[', top: '(', action: 'push', symbol: '[', next: 'q0' },
+          { state: 'q0', read: '(', top: '[', action: 'push', symbol: '(', next: 'q0' },
+          { state: 'q0', read: '[', top: '[', action: 'push', symbol: '[', next: 'q0' },
+          { state: 'q0', read: ')', top: '(', action: 'pop', next: 'q0' },
+          { state: 'q0', read: ']', top: '[', action: 'pop', next: 'q0' },
+          { state: 'q0', read: 'ε', top: '#', action: 'accept', next: 'q_accept' }
+        ]
+      },
+      {
+        id: 5,
+        title: "Level 5: Die Meisterprüfung (Crash)",
+        description: "Der Compiler-Albtraum: Sich überkreuzende Klammern! Wort: '([)]'",
+        word: "([)]",
+        startState: "q0",
+        rules: [
+          { state: 'q0', read: '(', top: '#', action: 'push', symbol: '(', next: 'q0' },
+          { state: 'q0', read: '[', top: '#', action: 'push', symbol: '[', next: 'q0' },
+          { state: 'q0', read: '(', top: '(', action: 'push', symbol: '(', next: 'q0' },
+          { state: 'q0', read: '[', top: '(', action: 'push', symbol: '[', next: 'q0' },
+          { state: 'q0', read: '(', top: '[', action: 'push', symbol: '(', next: 'q0' },
+          { state: 'q0', read: '[', top: '[', action: 'push', symbol: '[', next: 'q0' },
+          { state: 'q0', read: ')', top: '(', action: 'pop', next: 'q0' },
+          { state: 'q0', read: ']', top: '[', action: 'pop', next: 'q0' },
+          { state: 'q0', read: 'ε', top: '#', action: 'accept', next: 'q_accept' }
+        ]
+      }
+    ];
+
+    const StateMachineGraph = ({ levelId, currentState }) => {
+      const Node = ({ x, y, id, label, isAccept }) => {
+        const isActive = currentState === id;
+        return (
+          <g transform={`translate(${x},${y})`}>
+            {isAccept && <circle r="22" fill="none" stroke={isActive ? "#3b82f6" : "#cbd5e1"} strokeWidth="1.5" className="transition-all duration-300"/>}
+            <circle r="18" fill={isActive ? "#eff6ff" : "white"} stroke={isActive ? "#3b82f6" : "#64748b"} strokeWidth="2" className="transition-all duration-300 shadow-sm" />
+            <text textAnchor="middle" dy=".3em" className={`font-bold font-mono text-xs ${isActive ? "fill-blue-700" : "fill-slate-700"}`}>{label || id}</text>
+          </g>
+        );
+      };
+
+      if (levelId === 1 || levelId === 2) {
+        return (
+          <svg viewBox="0 0 500 180" className="w-full h-auto drop-shadow-sm">
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8" />
+              </marker>
+            </defs>
+            <path d="M 85 120 C 0 0, 200 0, 115 120" fill="none" stroke="#94a3b8" strokeWidth="1.5" markerEnd="url(#arrow)" />
+            <text x="100" y="45" textAnchor="middle" className="text-xs fill-slate-700 font-mono">
+              <tspan x="100" dy="0">(#, a): A#</tspan>
+              <tspan x="100" dy="16">(A, a): AA</tspan>
+            </text>
+            <path d="M 120 140 L 230 140" fill="none" stroke="#94a3b8" strokeWidth="1.5" markerEnd="url(#arrow)" />
+            <text x="175" y="130" textAnchor="middle" className="text-xs fill-slate-700 font-mono">(A, b): ε</text>
+            <path d="M 235 120 C 150 0, 350 0, 265 120" fill="none" stroke="#94a3b8" strokeWidth="1.5" markerEnd="url(#arrow)" />
+            <text x="250" y="55" textAnchor="middle" className="text-xs fill-slate-700 font-mono">(A, b): ε</text>
+            <path d="M 270 140 L 380 140" fill="none" stroke="#94a3b8" strokeWidth="1.5" markerEnd="url(#arrow)" />
+            <text x="325" y="130" textAnchor="middle" className="text-xs fill-slate-700 font-mono">(#, ε): ε</text>
+            <Node x={100} y={140} id="q0" />
+            <Node x={250} y={140} id="q1" />
+            <Node x={400} y={140} id="q2" isAccept={true} />
+          </svg>
+        );
+      }
+
+      let loopLabels = [];
+      if (levelId === 0) {
+        loopLabels = ["(#, {): {#", "({, {): {{", "({, }): ε"];
+      } else if (levelId === 3) {
+        loopLabels = ["(#, (): (#", "((, (): ((", "((, )): ε"];
+      } else {
+        loopLabels = ["(Z, auf): auf Z", "(auf, zu): ε", "...(analog)"];
+      }
+
+      return (
+        <svg viewBox="0 0 500 180" className="w-full h-auto drop-shadow-sm">
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8" />
+              </marker>
+            </defs>
+            <path d="M 135 120 C 20 -10, 280 -10, 165 120" fill="none" stroke="#94a3b8" strokeWidth="1.5" markerEnd="url(#arrow)" />
+            <text x="150" y="45" textAnchor="middle" className="text-xs fill-slate-700 font-mono">
+              {loopLabels.map((lbl, i) => <tspan key={i} x="150" dy={i === 0 ? 0 : 16}>{lbl}</tspan>)}
+            </text>
+            <path d="M 170 140 L 330 140" fill="none" stroke="#94a3b8" strokeWidth="1.5" markerEnd="url(#arrow)" />
+            <text x="250" y="130" textAnchor="middle" className="text-xs fill-slate-700 font-mono">(#, ε): ε</text>
+            <Node x={150} y={140} id="q0" />
+            <Node x={350} y={140} id="q_accept" label="q_acc" isAccept={true} />
+        </svg>
+      );
+    };
+
+    function App() {
+      const [currentLevelIdx, setCurrentLevelIdx] = useState(0);
+      const [activeLevel, setActiveLevel] = useState(LEVELS[0]);
+      
+      const [tapeIndex, setTapeIndex] = useState(0);
+      const [stack, setStack] = useState(['#']);
+      const [machineState, setMachineState] = useState('q0');
+      const [status, setStatus] = useState('idle'); 
+      const [logs, setLogs] = useState([]);
+      const [isPlaying, setIsPlaying] = useState(false);
+      
+      const [aiTutorMessage, setAiTutorMessage] = useState("");
+      const [isAiTutorLoading, setIsAiTutorLoading] = useState(false);
+      const [isWordGenLoading, setIsWordGenLoading] = useState(false);
+
+      const logsEndRef = useRef(null);
+
+      useEffect(() => {
+        logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }, [logs]);
+
+      useEffect(() => {
+        setActiveLevel(LEVELS[currentLevelIdx]);
+      }, [currentLevelIdx]);
+
+      useEffect(() => {
+        resetMachine();
+      }, [activeLevel]);
+
+      useEffect(() => {
+        let timer;
+        if (isPlaying && (status === 'idle' || status === 'running')) {
+          timer = setTimeout(() => {
+            performStep();
+          }, 1000);
+        } else {
+          setIsPlaying(false);
+        }
+        return () => clearTimeout(timer);
+      }, [isPlaying, status, tapeIndex, stack, machineState]);
+
+      const resetMachine = () => {
+        setTapeIndex(0);
+        setStack(['#']);
+        setMachineState(activeLevel.startState);
+        setStatus('idle');
+        setLogs([{ type: 'info', msg: `Automat bereit. Wort: "${activeLevel.word}"` }]);
+        setIsPlaying(false);
+        setAiTutorMessage(""); 
+      };
+
+      const addLog = (type, msg) => {
+        setLogs(prev => [...prev, { type, msg }]);
+      };
+
+      const performStep = () => {
+        if (status === 'success' || status === 'error') return;
+
+        setStatus('running');
+        setAiTutorMessage(""); 
+        
+        const isEndOfWord = tapeIndex >= activeLevel.word.length;
+        const charToRead = isEndOfWord ? 'ε' : activeLevel.word[tapeIndex];
+        const topOfStack = stack[stack.length - 1];
+
+        const rule = activeLevel.rules.find(
+          r => r.state === machineState && r.read === charToRead && r.top === topOfStack
+        );
+
+        if (!rule) {
+          setStatus('error');
+          addLog('error', `CRASH! Keine Regel gefunden für: Zustand ${machineState}, Eingabe '${charToRead}', Keller '${topOfStack}'.`);
+          return;
+        }
+
+        let newStack = [...stack];
+        let actionDesc = "";
+
+        if (rule.action === 'push') {
+          newStack.push(rule.symbol);
+          actionDesc = `Lege '${rule.symbol}' in den Keller.`;
+        } else if (rule.action === 'pop') {
+          newStack.pop();
+          actionDesc = `Nehme '${topOfStack}' aus dem Keller (Pop).`;
+        } else if (rule.action === 'accept') {
+          newStack.pop(); 
+          actionDesc = `Keller ist leer. Wort akzeptiert!`;
+        }
+
+        const logMsg = rule.desc 
+          ? `Regel: ${rule.desc}`
+          : `Lese '${charToRead}'. ${actionDesc} Neuer Zustand: ${rule.next}`;
+        
+        addLog('step', logMsg);
+
+        setStack(newStack);
+        setMachineState(rule.next);
+        
+        if (!isEndOfWord) {
+          setTapeIndex(tapeIndex + 1);
+        }
+
+        if (rule.action === 'accept' || rule.next === 'q2' || rule.next === 'q_accept') {
+          setStatus('success');
+          addLog('success', "Syntaxprüfung erfolgreich beendet!");
+        }
+      };
+
+      const handleAskTutor = async () => {
+        setIsAiTutorLoading(true);
+        setAiTutorMessage("");
+        
+        const lastLogs = logs.slice(-3).map(l => l.msg).join(' | ');
+        const isEndOfWord = tapeIndex >= activeLevel.word.length;
+        const charToRead = isEndOfWord ? 'ε (Wortende)' : activeLevel.word[tapeIndex];
+
+        const prompt = `
+          Der Schüler lernt Kellerautomaten und befindet sich in folgendem Zustand:
+          - Level: ${activeLevel.title}
+          - Gesamtes Eingabewort: "${activeLevel.word}"
+          - Aktuell zu lesendes Zeichen: '${charToRead}'
+          - Aktueller Maschinen-Zustand: ${machineState}
+          - Kellerspeicher von unten nach oben: [${stack.join(', ')}]
+          - Status des Automaten: ${status}
+          - Letzte Aktionen: ${lastLogs}
+
+          Erkläre dem Schüler kurz, was passiert ist oder warum der Automat in diesem Zustand ist. 
+          Wenn es einen 'error' gab, erkläre genau warum das Zeichen nicht zum Kellersymbol passte.
+        `;
+
+        try {
+          const response = await fetchGemini(prompt, false);
+          setAiTutorMessage(response);
+        } catch (err) {
+          setAiTutorMessage(`Ups, KI-Fehler: ${err.message}`);
+        } finally {
+          setIsAiTutorLoading(false);
+        }
+      };
+
+      const handleGenerateWord = async () => {
+        setIsWordGenLoading(true);
+        setAiTutorMessage("");
+
+        const prompt = `
+          Generiere ein neues Testwort (String) für diesen spezifischen Kellerautomaten.
+          Titel des Levels: ${activeLevel.title}
+          Erlaubte Zeichen in diesem Level: ${Array.from(new Set(activeLevel.word.split(''))).join(', ')}
+          
+          Das Wort sollte entweder knapp fehlschlagen oder gültig sein.
+          Antworte strikt nach dem JSON Schema.
+        `;
+
+        try {
+          const result = await fetchGemini(prompt, true);
+          setActiveLevel(prev => ({
+            ...prev,
+            word: result.word,
+            description: `✨ KI-Testwort: ${result.explanation}`
+          }));
+          addLog('info', `✨ KI hat neues Testwort generiert: "${result.word}"`);
+        } catch (err) {
+          addLog('error', `Fehler beim Generieren: ${err.message}`);
+        } finally {
+          setIsWordGenLoading(false);
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-800">
+          
+          <div className="max-w-5xl mx-auto mb-8 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div className="flex-1">
+                <h1 className="text-3xl font-bold text-slate-900 flex items-center gap-3">
+                  <BookOpen className="text-blue-600" />
+                  Kellerautomat Simulator
+                </h1>
+                <p className="text-slate-500 mt-2 max-w-2xl">{activeLevel.description}</p>
+              </div>
+              
+              <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200 overflow-x-auto max-w-full">
+                {LEVELS.map((l, idx) => (
+                  <button
+                    key={l.id}
+                    onClick={() => {
+                      setCurrentLevelIdx(idx);
+                      setIsPlaying(false);
+                    }}
+                    className={`px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
+                      currentLevelIdx === idx 
+                        ? 'bg-white text-blue-700 shadow-sm border border-slate-200' 
+                        : 'text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    Lvl {l.id}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-2 space-y-8">
+              
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                    <ChevronRight size={16}/> Eingabeband
+                  </h2>
+                  <button 
+                    onClick={handleGenerateWord}
+                    disabled={isWordGenLoading || isPlaying}
+                    className="flex items-center gap-2 text-xs font-semibold bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-full hover:bg-indigo-100 transition-colors border border-indigo-200 disabled:opacity-50"
+                  >
+                    {isWordGenLoading ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+                    ✨ Neues Wort ausdenken
+                  </button>
+                </div>
+
+                <div className="flex gap-2 justify-center overflow-x-auto py-4">
+                  {activeLevel.word.split('').map((char, idx) => {
+                    const isCurrent = idx === tapeIndex && status !== 'success';
+                    const isPast = idx < tapeIndex;
+                    return (
+                      <div 
+                        key={idx} 
+                        className={`
+                          min-w-[56px] h-16 flex items-center justify-center text-2xl font-mono rounded-lg border-2 transition-all duration-300 px-2
+                          ${isCurrent ? 'border-blue-500 bg-blue-50 shadow-[0_0_15px_rgba(59,130,246,0.3)] scale-110 z-10' : ''}
+                          ${isPast ? 'border-slate-200 bg-slate-100 text-slate-400' : ''}
+                          ${!isCurrent && !isPast ? 'border-slate-300 bg-white' : ''}
+                        `}
+                      >
+                        {char}
+                      </div>
+                    );
+                  })}
+                  <div className={`
+                      w-14 h-16 flex items-center justify-center text-xl font-mono rounded-lg border-2 border-dashed transition-all duration-300
+                      ${tapeIndex >= activeLevel.word.length && status !== 'success' && status !== 'error' ? 'border-green-500 bg-green-50 scale-110' : 'border-slate-200 text-slate-300 bg-transparent'}
+                    `}
+                  >
+                    ε
+                  </div>
+                </div>
+                
+                <div className="flex justify-center mt-2">
+                  <div 
+                    className="w-0 h-0 border-l-[10px] border-l-transparent border-r-[10px] border-r-transparent border-b-[15px] border-b-blue-500 transition-all duration-300"
+                    style={{ transform: `translateX(${(tapeIndex - (activeLevel.word.length / 2)) * 64}px)` }} 
+                  />
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                  Zustandsübergangsgraph
+                </h2>
+                <div className="w-full bg-slate-50 rounded-xl border border-slate-100 p-6 flex justify-center items-center">
+                  <div className="w-full max-w-2xl">
+                    <StateMachineGraph levelId={activeLevel.id} currentState={machineState} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col items-center">
+                  <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 w-full flex items-center gap-2">
+                     <div className="w-4 h-4 rounded-sm border-2 border-slate-400"></div> Kellerspeicher
+                  </h2>
+                  
+                  <div className="w-32 min-h-[240px] border-x-4 border-b-4 border-slate-700 rounded-b-xl p-2 flex flex-col justify-end bg-slate-50 relative">
+                    <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-slate-400 font-mono text-sm flex gap-4">
+                      <span>↓ In</span>
+                      <span>Out ↑</span>
+                    </div>
+
+                    {stack.map((symbol, idx) => (
+                      <div 
+                        key={idx}
+                        className={`
+                          w-full h-12 bg-indigo-100 border-2 border-indigo-300 rounded-md flex items-center justify-center text-xl font-mono font-bold text-indigo-800 mb-1 last:mb-0 shadow-sm
+                          animate-[slideIn_0.2s_ease-out]
+                        `}
+                      >
+                        {symbol}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col">
+                  <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-2">Maschinen-Steuerung</h2>
+                  
+                  <div className="flex-grow flex flex-col justify-center items-center mb-6 w-full bg-slate-50 rounded-xl border border-slate-100 p-4">
+                    
+                    <div className={`
+                      w-24 h-24 rounded-full flex items-center justify-center text-3xl font-bold border-4 transition-all duration-500 shadow-lg
+                      ${status === 'error' ? 'border-red-500 bg-red-100 text-red-700' : ''}
+                      ${status === 'success' ? 'border-green-500 bg-green-100 text-green-700' : ''}
+                      ${status === 'idle' || status === 'running' ? 'border-blue-500 bg-blue-50 text-blue-700' : ''}
+                    `}>
+                      {machineState}
+                    </div>
+                    
+                    <div className="mt-6 text-center min-h-[28px]">
+                      {status === 'error' && <span className="inline-flex items-center gap-2 text-red-600 font-semibold"><AlertCircle size={20}/> Syntax Error</span>}
+                      {status === 'success' && <span className="inline-flex items-center gap-2 text-green-600 font-semibold"><CheckCircle2 size={20}/> Akzeptiert</span>}
+                      {(status === 'idle' || status === 'running') && <span className="text-slate-500 text-sm font-mono">Arbeitet...</span>}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
+                    <button 
+                      onClick={() => setIsPlaying(!isPlaying)}
+                      disabled={status === 'error' || status === 'success'}
+                      className="flex flex-col items-center justify-center p-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 disabled:opacity-50 transition-colors"
+                    >
+                      {isPlaying ? <Pause size={24} className="mb-1" /> : <Play size={24} className="mb-1" />}
+                      <span className="text-xs font-semibold">{isPlaying ? 'Pause' : 'Play'}</span>
+                    </button>
+                    <button 
+                      onClick={performStep}
+                      disabled={isPlaying || status === 'error' || status === 'success'}
+                      className="flex flex-col items-center justify-center p-3 rounded-xl bg-blue-100 hover:bg-blue-200 text-blue-700 disabled:opacity-50 transition-colors"
+                    >
+                      <StepForward size={24} className="mb-1" />
+                      <span className="text-xs font-semibold">Schritt</span>
+                    </button>
+                    <button 
+                      onClick={resetMachine}
+                      className="flex flex-col items-center justify-center p-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors"
+                    >
+                      <RotateCcw size={24} className="mb-1" />
+                      <span className="text-xs font-semibold">Reset</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-8">
+              <div className="bg-slate-900 rounded-2xl shadow-sm border border-slate-800 flex flex-col h-48 overflow-hidden">
+                 <div className="bg-slate-800 px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+                  <h2 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                    Ereignis-Protokoll
+                  </h2>
+                 </div>
+                 <div className="p-4 overflow-y-auto flex-grow font-mono text-sm space-y-3">
+                    {logs.map((log, idx) => (
+                      <div key={idx} className={`
+                        p-2 rounded border-l-4
+                        ${log.type === 'info' ? 'border-blue-500 bg-slate-800/50 text-blue-300' : ''}
+                        ${log.type === 'step' ? 'border-slate-500 bg-slate-800 text-slate-300' : ''}
+                        ${log.type === 'error' ? 'border-red-500 bg-red-900/30 text-red-400' : ''}
+                        ${log.type === 'success' ? 'border-green-500 bg-green-900/30 text-green-400' : ''}
+                      `}>
+                        <span className="opacity-50 text-xs mr-2">[{idx}]</span>
+                        {log.msg}
+                      </div>
+                    ))}
+                    <div ref={logsEndRef} />
+                 </div>
+              </div>
+
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col max-h-64">
+                 <div className="bg-slate-50 px-4 py-3 border-b border-slate-200">
+                  <h2 className="text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center gap-2">
+                    Übergangsfunktion δ
+                  </h2>
+                 </div>
+                 <div className="overflow-y-auto">
+                   <table className="w-full text-xs text-center border-collapse">
+                     <thead className="sticky top-0 shadow-sm z-10">
+                       <tr>
+                         <th className="py-2 px-1 bg-[#dcedc8] text-green-900 border-r border-white font-semibold">Zustand</th>
+                         <th className="py-2 px-1 bg-[#dcedc8] text-green-900 border-r border-white font-semibold">Eingabe</th>
+                         <th className="py-2 px-1 bg-[#dcedc8] text-green-900 border-r border-white font-semibold">Keller</th>
+                         <th className="py-2 px-1 bg-[#bbdefb] text-blue-900 border-r border-white font-semibold">Zustand</th>
+                         <th className="py-2 px-1 bg-[#bbdefb] text-blue-900 font-semibold">Keller</th>
+                       </tr>
+                     </thead>
+                     <tbody>
+                       {activeLevel.rules.map((r, i) => {
+                          const isEndOfWord = tapeIndex >= activeLevel.word.length;
+                          const charToRead = isEndOfWord ? 'ε' : activeLevel.word[tapeIndex];
+                          const topOfStack = stack[stack.length - 1];
+                          const isActive = (status === 'idle' || status === 'running') && r.state === machineState && r.read === charToRead && r.top === topOfStack;
+                          
+                          const newKeller = r.action === 'push' ? (r.symbol + r.top) : 'ε';
+
+                          return (
+                            <tr key={i} className={`border-b border-slate-100 last:border-0 transition-colors ${isActive ? 'bg-amber-200 font-bold text-amber-900' : 'hover:bg-slate-50'}`}>
+                              <td className="py-1.5 px-1 border-r border-slate-100">{r.state}</td>
+                              <td className="py-1.5 px-1 border-r border-slate-100">{r.read}</td>
+                              <td className="py-1.5 px-1 border-r border-slate-200">{r.top}</td>
+                              <td className="py-1.5 px-1 border-r border-slate-100">{r.next}</td>
+                              <td className="py-1.5 px-1">{newKeller}</td>
+                            </tr>
+                          );
+                       })}
+                     </tbody>
+                   </table>
+                 </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-amber-200 bg-amber-50">
+                 <h2 className="text-sm font-bold text-amber-800 uppercase tracking-wider mb-3 flex items-center gap-2">
+                  <Info size={18} /> So denkt der Automat
+                 </h2>
+                 <p className="text-amber-900 text-sm leading-relaxed">
+                   Lies die Tabelle im Kopf: 
+                   <br/><br/>
+                   <b>"Wenn ich in Zustand X bin..."</b><br/>
+                   <b>"...und Zeichen Y lese..."</b><br/>
+                   <b>"...und oben im Keller Z liegt..."</b><br/>
+                   <br/>
+                   ...dann wende ich die entsprechende Regel an! Fehlt die Regel, gibt es einen Syntax-Fehler (Crash).
+                 </p>
+              </div>
+
+            </div>
+          </div>
+          
+          <style dangerouslySetInnerHTML={{__html: `
+            @keyframes slideIn {
+              from { opacity: 0; transform: translateY(-10px); }
+              to { opacity: 1; transform: translateY(0); }
+            }
+          `}} />
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
