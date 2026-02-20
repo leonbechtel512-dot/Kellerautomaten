@@ -5,23 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Kellerautomat Simulator</title>
   
-  <!-- Tailwind CSS -->
+  <!-- Tailwind CSS für das Design -->
   <script src="https://cdn.tailwindcss.com"></script>
   
   <!-- React & ReactDOM -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   
-  <!-- Babel (um JSX im Browser zu kompilieren) -->
+  <!-- Babel (WICHTIG: Übersetzt den React-Code im Browser) -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
 <body class="bg-slate-50">
+  <!-- Hier wird die App hineingeladen -->
   <div id="root"></div>
 
+  <!-- Der eigentliche Programmcode -->
   <script type="text/babel">
     const { useState, useEffect, useRef } = React;
     
-    // --- Inline SVG Icons (Ersatz für lucide-react, um CDN-Fehler zu vermeiden) ---
+    // --- Inline SVG Icons (Keine externen Abhängigkeiten mehr, verhindert Ladefehler) ---
     const Icon = ({ d, size = 24, className = "" }) => (
       <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
         {d}
@@ -36,58 +38,6 @@
     const CheckCircle2 = (p) => <Icon {...p} d={<><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></>} />;
     const ChevronRight = (p) => <Icon {...p} d={<polyline points="9 18 15 12 9 6" />} />;
     const Info = (p) => <Icon {...p} d={<><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></>} />;
-    const Loader2 = (p) => <Icon {...p} d={<path d="M21 12a9 9 0 1 1-6.219-8.56" />} />;
-    const Wand2 = (p) => <Icon {...p} d={<><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"/></>} />;
-
-    // --- Gemini API Konfiguration ---
-    const apiKey = ""; // Wird zur Laufzeit injiziert
-
-    const fetchGemini = async (prompt, isJson = false, retries = 5, delay = 1000) => {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-
-      const payload = {
-        contents: [{ parts: [{ text: prompt }] }],
-        systemInstruction: {
-          parts: [{ text: "Du bist ein motivierender, didaktisch geschulter Informatik-Tutor für Schüler. Du hilfst beim Thema Kellerautomaten (Pushdown Automata). Antworte immer auf Deutsch, fass dich kurz (max 3 Sätze) und nutze gerne Emojis." }]
-        }
-      };
-
-      if (isJson) {
-        payload.generationConfig = {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: "OBJECT",
-            properties: {
-              word: { type: "STRING" },
-              explanation: { type: "STRING" }
-            }
-          }
-        };
-      }
-
-      try {
-        const response = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-
-        if (!response.ok) throw new Error(`API Fehler: ${response.status}`);
-        const data = await response.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        
-        if (isJson) {
-          return JSON.parse(text);
-        }
-        return text;
-      } catch (error) {
-        if (retries <= 0) {
-          throw new Error("KI-Netzwerkfehler nach mehreren Versuchen. Bitte versuche es später noch einmal.");
-        }
-        await new Promise(res => setTimeout(res, delay));
-        return fetchGemini(prompt, isJson, retries - 1, delay * 2);
-      }
-    };
 
     // --- Level-Daten und Automaten-Regeln ---
     const LEVELS = [
@@ -259,10 +209,6 @@
       const [status, setStatus] = useState('idle'); 
       const [logs, setLogs] = useState([]);
       const [isPlaying, setIsPlaying] = useState(false);
-      
-      const [aiTutorMessage, setAiTutorMessage] = useState("");
-      const [isAiTutorLoading, setIsAiTutorLoading] = useState(false);
-      const [isWordGenLoading, setIsWordGenLoading] = useState(false);
 
       const logsEndRef = useRef(null);
 
@@ -297,7 +243,6 @@
         setStatus('idle');
         setLogs([{ type: 'info', msg: `Automat bereit. Wort: "${activeLevel.word}"` }]);
         setIsPlaying(false);
-        setAiTutorMessage(""); 
       };
 
       const addLog = (type, msg) => {
@@ -308,7 +253,6 @@
         if (status === 'success' || status === 'error') return;
 
         setStatus('running');
-        setAiTutorMessage(""); 
         
         const isEndOfWord = tapeIndex >= activeLevel.word.length;
         const charToRead = isEndOfWord ? 'ε' : activeLevel.word[tapeIndex];
@@ -357,66 +301,6 @@
         }
       };
 
-      const handleAskTutor = async () => {
-        setIsAiTutorLoading(true);
-        setAiTutorMessage("");
-        
-        const lastLogs = logs.slice(-3).map(l => l.msg).join(' | ');
-        const isEndOfWord = tapeIndex >= activeLevel.word.length;
-        const charToRead = isEndOfWord ? 'ε (Wortende)' : activeLevel.word[tapeIndex];
-
-        const prompt = `
-          Der Schüler lernt Kellerautomaten und befindet sich in folgendem Zustand:
-          - Level: ${activeLevel.title}
-          - Gesamtes Eingabewort: "${activeLevel.word}"
-          - Aktuell zu lesendes Zeichen: '${charToRead}'
-          - Aktueller Maschinen-Zustand: ${machineState}
-          - Kellerspeicher von unten nach oben: [${stack.join(', ')}]
-          - Status des Automaten: ${status}
-          - Letzte Aktionen: ${lastLogs}
-
-          Erkläre dem Schüler kurz, was passiert ist oder warum der Automat in diesem Zustand ist. 
-          Wenn es einen 'error' gab, erkläre genau warum das Zeichen nicht zum Kellersymbol passte.
-        `;
-
-        try {
-          const response = await fetchGemini(prompt, false);
-          setAiTutorMessage(response);
-        } catch (err) {
-          setAiTutorMessage(`Ups, KI-Fehler: ${err.message}`);
-        } finally {
-          setIsAiTutorLoading(false);
-        }
-      };
-
-      const handleGenerateWord = async () => {
-        setIsWordGenLoading(true);
-        setAiTutorMessage("");
-
-        const prompt = `
-          Generiere ein neues Testwort (String) für diesen spezifischen Kellerautomaten.
-          Titel des Levels: ${activeLevel.title}
-          Erlaubte Zeichen in diesem Level: ${Array.from(new Set(activeLevel.word.split(''))).join(', ')}
-          
-          Das Wort sollte entweder knapp fehlschlagen oder gültig sein.
-          Antworte strikt nach dem JSON Schema.
-        `;
-
-        try {
-          const result = await fetchGemini(prompt, true);
-          setActiveLevel(prev => ({
-            ...prev,
-            word: result.word,
-            description: `✨ KI-Testwort: ${result.explanation}`
-          }));
-          addLog('info', `✨ KI hat neues Testwort generiert: "${result.word}"`);
-        } catch (err) {
-          addLog('error', `Fehler beim Generieren: ${err.message}`);
-        } finally {
-          setIsWordGenLoading(false);
-        }
-      };
-
       return (
         <div className="min-h-screen bg-slate-50 p-4 md:p-8 font-sans text-slate-800">
           
@@ -459,14 +343,6 @@
                   <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
                     <ChevronRight size={16}/> Eingabeband
                   </h2>
-                  <button 
-                    onClick={handleGenerateWord}
-                    disabled={isWordGenLoading || isPlaying}
-                    className="flex items-center gap-2 text-xs font-semibold bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-full hover:bg-indigo-100 transition-colors border border-indigo-200 disabled:opacity-50"
-                  >
-                    {isWordGenLoading ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
-                    ✨ Neues Wort ausdenken
-                  </button>
                 </div>
 
                 <div className="flex gap-2 justify-center overflow-x-auto py-4">
